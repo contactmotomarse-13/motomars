@@ -1,15 +1,23 @@
-import { NextResponse } from "next/server";
-export async function GET(req: Request) {
+import { NextRequest, NextResponse } from "next/server";
+type OsrmRoute = { distance: number; duration: number };
+type OsrmResponse = { code: "Ok"; routes: OsrmRoute[] } | { code: string; message?: string };
+
+export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const from = searchParams.get("from"); const to = searchParams.get("to");
-  if (!from || !to) return NextResponse.json({ error:"Missing params" }, { status:400 });
-  const url = `https://router.project-osrm.org/route/v1/motorcycle/${from};${to}?alternatives=false&overview=false&annotations=duration,distance&language=fr`;
-  const r = await fetch(url, { cache:"no-store" });
-  if (!r.ok) return NextResponse.json({ error:"OSRM error" }, { status:r.status });
-  const data = await r.json(); const route = data?.routes?.[0];
-  if (!route) return NextResponse.json({ error:"No route" }, { status:502 });
-  return NextResponse.json({
-    km: +(route.distance/1000).toFixed(1),
-    minutes: Math.max(1, Math.round(route.duration/60)),
-  });
+  const from = (searchParams.get("from") || "").trim();
+  const to = (searchParams.get("to") || "").trim();
+  if (!from || !to || !from.includes(",") || !to.includes(",")) {
+    return NextResponse.json({ error: "bad_params" }, { status: 400 });
+  }
+  const url = `https://router.project-osrm.org/route/v1/driving/${from};${to}?overview=false`;
+  const r = await fetch(url, { next: { revalidate: 60 } });
+  if (!r.ok) return NextResponse.json({ error: "osrm_error" }, { status: r.status });
+  const data: OsrmResponse = await r.json();
+  if (data.code !== "Ok" || !("routes" in data) || !data.routes?.length) {
+    return NextResponse.json({ error: "no_route" }, { status: 404 });
+  }
+  const route = data.routes[0];
+  const km = route.distance / 1000;
+  const minutes = Math.round(route.duration / 60);
+  return NextResponse.json({ km, minutes });
 }
